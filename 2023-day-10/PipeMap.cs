@@ -13,8 +13,20 @@ public class PipeMap
     private int _width => _map.GetLength(1);
 
     private Coordinate _startPosition;
-    private List<Coordinate> _solutionPath;
-    private char this[Coordinate c] => _map[c.Row, c.Col];
+    private List<Coordinate> _solutionPathList;
+    private HashSet<Coordinate> _solutionPathHash;
+
+    private char this[Coordinate c]
+    {
+        get
+        {
+            return _map[c.Row, c.Col];
+        }
+        set
+        {
+            _map[c.Row, c.Col] = value;
+        }
+    }
 
     public PipeMap(IList<string> map)
     {
@@ -33,8 +45,179 @@ public class PipeMap
             }
         }
 
-        _solutionPath = SolvePath();
-        Console.WriteLine($"Solution path contains {_solutionPath.Count} cells.  Half of that is: {_solutionPath.Count / 2}");
+        _solutionPathList = SolvePath();
+        _solutionPathHash = new HashSet<Coordinate>(_solutionPathList);
+
+        RewriteStartPosition();
+        int enclosedCells = CalculateEnclosedArea();
+
+        Console.WriteLine($"Solution path contains {_solutionPathList.Count} cells.  The furthest point is {_solutionPathList.Count / 2} steps away.  The enclosed area is {enclosedCells}.");
+    }
+
+    private void RewriteStartPosition()
+    {
+        Coordinate cellAbove = new(_startPosition.Row - 1, _startPosition.Col);
+        Coordinate cellBelow = new(_startPosition.Row + 1, _startPosition.Col);
+        Coordinate cellLeft = new(_startPosition.Row, _startPosition.Col - 1);
+        Coordinate cellRight = new(_startPosition.Row, _startPosition.Col + 1);
+
+        bool aboveConnected = CellConnected(cellAbove, ['|', '7', 'F']);
+        bool belowConnected = CellConnected(cellBelow, ['|', 'J', 'L']);
+        bool leftConnected = CellConnected(cellLeft, ['-', 'F', 'L']);
+        bool rightConnected = CellConnected(cellRight, ['-', 'J', '7']);
+
+        int connections = 0;
+        if (aboveConnected) connections++;
+        if (belowConnected) connections++;
+        if (leftConnected) connections++;
+        if (rightConnected) connections++;
+
+        if (connections != 2)
+            throw new InvalidOperationException();
+
+        if (aboveConnected && belowConnected)
+            this[_startPosition] = '|';
+        if (aboveConnected && leftConnected)
+            this[_startPosition] = 'J';
+        if (aboveConnected && rightConnected)
+            this[_startPosition] = 'L';
+
+        if (belowConnected && leftConnected)
+            this[_startPosition] = '7';
+        if (belowConnected && rightConnected)
+            this[_startPosition] = 'F';
+
+        if (leftConnected && rightConnected)
+            this[_startPosition] = '-';
+    }
+
+    private bool CellExists(Coordinate cell)
+    {
+        try
+        {
+            char c = this[cell];
+        }
+        catch (IndexOutOfRangeException)
+        {
+            return false;
+        }
+        return true;
+    }
+
+    private bool CellConnected(Coordinate cell, HashSet<char> connectors)
+    {
+        return CellExists(cell)
+            && _solutionPathHash.Contains(cell)
+            && connectors.Contains(this[cell]);
+    }
+
+    private int CalculateEnclosedArea()
+    {
+        int result = 0;
+
+        // this loop goes row-by-row, travelling left-to-right
+        for (int curRow = 0; curRow < _map.GetLength(0); curRow++)
+        {
+            AreaCountingState curState = AreaCountingState.Outside;
+
+            for (int curCol = 0; curCol < _map.GetLength(1); curCol++)
+            {
+                Coordinate cell = new(curRow, curCol);
+                (curState, bool countThisCell) = HandleCell(curState, cell);
+                if (countThisCell)
+                    result++;
+            }
+        }
+
+        return result;
+    }
+
+    private (AreaCountingState, bool) HandleCell(AreaCountingState curState, Coordinate cell)
+    {
+        switch (this[cell])
+        {
+            case '-':
+                return (curState, curState == AreaCountingState.Inside);
+
+            case '.':
+                if (curState == AreaCountingState.RidingAbove
+                    || curState == AreaCountingState.RidingBelow)
+                    throw new InvalidOperationException();
+
+                return (curState, curState == AreaCountingState.Inside);
+
+            case '|':
+                // the ridingabove and ridingbelow states
+                // will ALWAYS result in J or 7 junctions
+                if (curState == AreaCountingState.RidingAbove
+                    || curState == AreaCountingState.RidingBelow)
+                    throw new InvalidOperationException();
+
+                if (_solutionPathHash.Contains(cell))
+                {
+                    if (curState == AreaCountingState.Outside)
+                        return (AreaCountingState.Inside, false);
+                    return (AreaCountingState.Outside, false);
+                }
+                return (curState, curState == AreaCountingState.Inside);
+
+            case 'J':
+                if (curState == AreaCountingState.RidingBelow)
+                    return (AreaCountingState.Outside, false);
+                if (curState == AreaCountingState.RidingAbove)
+                    return (AreaCountingState.Inside, false);
+
+                if (_solutionPathHash.Contains(cell))
+                    throw new InvalidOperationException();
+
+                return (curState, curState == AreaCountingState.Inside);
+
+            case '7':
+                if (curState == AreaCountingState.RidingBelow)
+                    return (AreaCountingState.Inside, false);
+                if (curState == AreaCountingState.RidingAbove)
+                    return (AreaCountingState.Outside, false);
+
+                if (_solutionPathHash.Contains(cell))
+                    throw new InvalidOperationException();
+
+                return (curState, curState == AreaCountingState.Inside);
+
+            case 'L':
+                if (curState == AreaCountingState.RidingBelow
+                    || curState == AreaCountingState.RidingAbove)
+                    throw new InvalidOperationException();
+
+                if (_solutionPathHash.Contains(cell))
+                {
+                    return (
+                        curState == AreaCountingState.Inside ?
+                        AreaCountingState.RidingAbove
+                        : AreaCountingState.RidingBelow,
+                        false);
+                }
+
+                return (curState, curState == AreaCountingState.Inside);
+
+            case 'F':
+                if (curState == AreaCountingState.RidingBelow
+                    || curState == AreaCountingState.RidingAbove)
+                    throw new InvalidOperationException();
+
+                if (_solutionPathHash.Contains(cell))
+                {
+                    return (
+                        curState == AreaCountingState.Inside ?
+                        AreaCountingState.RidingBelow
+                        : AreaCountingState.RidingAbove,
+                        false);
+                }
+
+                return (curState, curState == AreaCountingState.Inside);
+
+            default:
+                throw new InvalidOperationException();
+        }
     }
 
     private List<Coordinate> SolvePath()
@@ -225,6 +408,14 @@ public class PipeMap
         Down,
         Left,
         Right
+    }
+
+    private enum AreaCountingState
+    {
+        Inside,
+        Outside,
+        RidingAbove,
+        RidingBelow
     }
 }
 
